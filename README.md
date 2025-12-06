@@ -501,7 +501,7 @@ This project is provided as-is for educational purposes.
 
 **Abhay Mehta**
 - GitHub: https://github.com/abhaynmehta
-- Email: [Your Email]
+- Email: abhaynmehta03@gmail.com
 
 ---
 
