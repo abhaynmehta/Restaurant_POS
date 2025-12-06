@@ -12,7 +12,8 @@ Endpoints:
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.orm import Session, joinedload
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import text
 
 from database import get_db, engine, Base
@@ -60,42 +61,48 @@ def root():
 def health_check(db: Session = Depends(get_db)):
     """Check API and database health status.
     
+    Performs a lightweight database query to verify connectivity.
+    Returns immediately on success.
+    
     Returns:
         dict: Status of API and database connection
     """
     try:
+        # Lightweight query to test connection
         db.execute(text("SELECT 1"))
+        db.close()  # Immediately release connection
         return {
             "status": "healthy",
             "database": "connected",
         }
-    except Exception:
+    except Exception as e:
         return {
             "status": "unhealthy",
             "database": "error",
+            "error": str(e)[:100]  # Limit error message length
         }
 
 def build_order_response(order: Order, db: Session) -> OrderDetailSchema:
     """Build complete order response with items and payments.
     
-    This function aggregates order data from multiple tables into a single
-    comprehensive response object with all order details, items, and payments.
+    Optimized to use selectinload and batch processing to minimize queries.
+    Aggregates order data from multiple tables into a single response object.
     
     Args:
-        order: Order model instance
+        order: Order model instance (should have items/payments pre-loaded)
         db: Database session
     
     Returns:
         OrderDetailSchema: Complete order details with items and payments
     """
-    # Fetch order items with eager loading to avoid N+1 queries
-    order_items = db.query(OrderItem).filter(
-        OrderItem.order_id == order.order_id
-    ).options(
-        joinedload(OrderItem.menu_item).joinedload(MenuItem.category)
-    ).all()
+    # Use order's pre-loaded relationships if available
+    order_items = order.order_items if order.order_items else (
+        db.query(OrderItem).filter(OrderItem.order_id == order.order_id)
+        .options(selectinload(OrderItem.menu_item).selectinload(MenuItem.category))
+        .all()
+    )
     
-    # Transform order items to schema
+    # Transform order items to schema - minimal data copying
     items = [
         OrderItemSchema(
             order_item_id=oi.order_item_id,
@@ -110,8 +117,11 @@ def build_order_response(order: Order, db: Session) -> OrderDetailSchema:
         for oi in order_items
     ]
     
-    # Fetch all payments for this order
-    payments = db.query(Payment).filter(Payment.order_id == order.order_id).all()
+    # Fetch all payments - use pre-loaded relationships if available
+    payments = order.payments if order.payments else (
+        db.query(Payment).filter(Payment.order_id == order.order_id).all()
+    )
+    
     payment_list = [
         PaymentSchema(
             payment_id=p.payment_id,
@@ -126,11 +136,19 @@ def build_order_response(order: Order, db: Session) -> OrderDetailSchema:
         for p in payments
     ]
     
-    # Calculate payment summary (only count completed payments)
-    completed_payments = [p for p in payments if p.payment_status == "Completed"]
-    total_paid = sum(p.amount_paid for p in completed_payments)
-    total_tips = sum(p.tips for p in completed_payments)
-    total_discount = sum(p.discount for p in completed_payments)
+    # Calculate payment summary in single pass (optimized)
+    total_paid = 0.0
+    total_tips = 0.0
+    total_discount = 0.0
+    payment_count = 0
+    
+    for p in payments:
+        if p.payment_status == "Completed":
+            total_paid += p.amount_paid
+            total_tips += p.tips
+            total_discount += p.discount
+        payment_count += 1
+    
     outstanding = order.total_amount - total_paid
     
     # Create order summary
@@ -140,7 +158,7 @@ def build_order_response(order: Order, db: Session) -> OrderDetailSchema:
         total_tips=total_tips,
         total_discount=total_discount,
         outstanding_balance=outstanding,
-        payment_count=len(payments),
+        payment_count=payment_count,
         is_fully_paid=abs(outstanding) < 0.01
     )
     
@@ -157,8 +175,8 @@ def build_order_response(order: Order, db: Session) -> OrderDetailSchema:
 def get_all_orders(db: Session = Depends(get_db), _: str = Depends(get_api_key)):
     """Get all orders with complete details.
     
-    Returns all orders from the database with their items, payments,
-    and summary information. Requires API key authentication.
+    Returns all orders with eager-loaded relationships to minimize queries.
+    Optimized to load orders with items and payments in minimal queries.
     
     Args:
         db: Database session
@@ -170,7 +188,12 @@ def get_all_orders(db: Session = Depends(get_db), _: str = Depends(get_api_key))
     Raises:
         HTTPException: 401 if API key is invalid or missing
     """
-    orders = db.query(Order).all()
+    # Eager load all relationships to avoid N+1 queries
+    orders = db.query(Order).options(
+        selectinload(Order.order_items).selectinload(OrderItem.menu_item).selectinload(MenuItem.category),
+        selectinload(Order.payments)
+    ).all()
+    
     return {
         "success": True,
         "count": len(orders),
@@ -186,11 +209,11 @@ def get_order(
 ) -> dict:
     """Get a specific order by ID.
     
-    Retrieves complete details for a single order including all items,
-    payments, and summary information. Requires API key authentication.
+    Retrieves complete order details with eager-loaded relationships.
+    Optimized to fetch order with items and payments in minimal queries.
     
     Args:
-        order_id: The ID of the order to retrieve
+        order_id: The ID of the order to retrieve (path parameter)
         db: Database session
         _: API key validation (dependency injection)
     
@@ -198,12 +221,21 @@ def get_order(
         dict: Order details with items and payments
     
     Raises:
-        HTTPException: 404 if order not found
-        HTTPException: 401 if API key is invalid or missing
+        HTTPException: 404 if order not found (status_code=404)
+        HTTPException: 401 if API key is invalid or missing (status_code=401)
     """
-    order = db.query(Order).filter(Order.order_id == order_id).first()
+    # Eager load all relationships for single query performance
+    order = db.query(Order).options(
+        selectinload(Order.order_items).selectinload(OrderItem.menu_item).selectinload(MenuItem.category),
+        selectinload(Order.payments)
+    ).filter(Order.order_id == order_id).first()
+    
     if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Order with ID {order_id} not found"
+        )
+    
     return {"success": True, "order": build_order_response(order, db)}
 
 

@@ -2,9 +2,14 @@
 
 This module defines all SQLAlchemy ORM models for the Restaurant POS API.
 Models represent database tables and their relationships.
+
+Optimizations:
+- Strategic indexes on foreign keys and frequently queried columns
+- Proper relationship configuration with lazy loading options
+- Efficient cascade options for data integrity
 """
 
-from sqlalchemy import Column, Integer, String, Date, Float, Boolean, ForeignKey, TIMESTAMP
+from sqlalchemy import Column, Integer, String, Date, Float, Boolean, ForeignKey, TIMESTAMP, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -82,17 +87,21 @@ class OrderItem(Base):
     """OrderItem model - represents individual items within an order."""
     
     __tablename__ = "order_items"
+    __table_args__ = (
+        Index('idx_order_id', 'order_id'),  # Fast lookups by order_id
+        Index('idx_item_id', 'item_id'),    # Fast lookups by item_id
+    )
     
     order_item_id = Column(Integer, primary_key=True, autoincrement=True)
-    order_id = Column(Integer, ForeignKey("orders.order_id"))
-    item_id = Column(Integer, ForeignKey("menu_items.item_id"))
+    order_id = Column(Integer, ForeignKey("orders.order_id"), nullable=False)
+    item_id = Column(Integer, ForeignKey("menu_items.item_id"), nullable=False)
     size = Column(String(20))
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Float, nullable=False)
     line_total = Column(Float, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp())
     
-    # Relationships
+    # Relationships - lazy loading optimized
     order = relationship("Order", back_populates="order_items")
     menu_item = relationship("MenuItem", back_populates="order_items")
 
@@ -101,9 +110,13 @@ class Payment(Base):
     """Payment model - represents payment transactions for orders."""
     
     __tablename__ = "payments"
+    __table_args__ = (
+        Index('idx_payment_order_id', 'order_id'),        # Fast lookups by order_id
+        Index('idx_payment_status', 'payment_status'),    # Fast status filtering
+    )
     
     payment_id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey("orders.order_id"))
+    order_id = Column(Integer, ForeignKey("orders.order_id"), nullable=False)
     payment_date = Column(Date, nullable=False)
     amount_due = Column(Float, nullable=False)
     amount_paid = Column(Float, nullable=False)

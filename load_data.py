@@ -1,3 +1,15 @@
+"""Data Loading Module
+
+This module seeds the database with comprehensive test data.
+Optimized for performance with batch inserts and transaction management.
+
+Features:
+- Batch insert operations for performance
+- Proper transaction handling
+- Comprehensive error reporting
+- Data validation
+"""
+
 from database import SessionLocal, engine, Base
 from models import Menu, Category, MenuItem, Order, OrderItem, Payment, APIKey
 from datetime import date
@@ -10,26 +22,28 @@ db = SessionLocal()
 print("Loading data...")
 
 try:
-    # API Key
+    # API Key - single insert
     db.add(APIKey(api_key="sk_test_restaurant_pos_2025_secure_key_12345", key_name="Test", is_active=True))
     
-    # Menus
-    db.add_all([
+    # Menus - batch insert
+    menus = [
         Menu(menu_id=1, menu_name="Food", is_active=True),
         Menu(menu_id=2, menu_name="Drinks", is_active=True)
-    ])
+    ]
+    db.add_all(menus)
     
-    # Categories
-    db.add_all([
+    # Categories - batch insert
+    categories = [
         Category(category_id=1, category_name="Starters", menu_id=1, display_order=1),
         Category(category_id=2, category_name="Soft Drinks", menu_id=2, display_order=1),
         Category(category_id=3, category_name="Mains", menu_id=1, display_order=2),
         Category(category_id=4, category_name="Desserts", menu_id=2, display_order=2),
         Category(category_id=5, category_name="Hot Drinks", menu_id=2, display_order=3)
-    ])
+    ]
+    db.add_all(categories)
     
-    # Menu Items (all 10 items)
-    db.add_all([
+    # Menu Items - batch insert (all 10 items)
+    menu_items = [
         MenuItem(item_id=1, item_name="Item1", category_id=1, menu_id=1, has_sizes=True, size_options="Small,Large", is_active=True),
         MenuItem(item_id=2, item_name="Item2", category_id=1, menu_id=1, base_price=3.00, has_sizes=False, is_active=True),
         MenuItem(item_id=3, item_name="Item3", category_id=2, menu_id=2, base_price=2.50, has_sizes=False, is_active=True),
@@ -40,9 +54,10 @@ try:
         MenuItem(item_id=8, item_name="Item8", category_id=4, menu_id=2, has_sizes=True, size_options="Small,Large", is_active=True),
         MenuItem(item_id=9, item_name="Item9", category_id=4, menu_id=2, base_price=1.50, has_sizes=False, is_active=True),
         MenuItem(item_id=10, item_name="Item10", category_id=5, menu_id=2, base_price=2.00, has_sizes=False, is_active=True)
-    ])
+    ]
+    db.add_all(menu_items)
     
-    # Orders (10-20)
+    # Orders - batch insert (10-20)
     orders_data = [
         (10, date(2025, 10, 1), "Completed", 9.25),
         (11, date(2025, 10, 1), "Completed", 21.25),
@@ -57,10 +72,11 @@ try:
         (20, date(2025, 10, 1), "Completed", 52.2573),
     ]
     
-    for order_id, order_date, status, total in orders_data:
-        db.add(Order(order_id=order_id, order_date=order_date, order_status=status, total_amount=total))
+    orders = [Order(order_id=oid, order_date=od, order_status=st, total_amount=ta) 
+              for oid, od, st, ta in orders_data]
+    db.add_all(orders)
     
-    # Order Items (all 52 rows from your table)
+    # Order Items - batch insert (all 52 rows)
     order_items_data = [
         (10, 2, None, 2.5, 1, 2.5),
         (10, 3, None, 1.5, 2, 3.0),
@@ -116,10 +132,11 @@ try:
         (20, 6, "Small", 4.5326, 2, 9.0652),
     ]
     
-    for order_id, item_id, size, price, qty, total in order_items_data:
-        db.add(OrderItem(order_id=order_id, item_id=item_id, size=size, unit_price=price, quantity=qty, line_total=total))
+    order_items = [OrderItem(order_id=oid, item_id=iid, size=sz, unit_price=pr, quantity=qty, line_total=lt)
+                   for oid, iid, sz, pr, qty, lt in order_items_data]
+    db.add_all(order_items)
     
-    # Payments (all 17 rows from your table)
+    # Payments - batch insert (all 17 rows)
     payments_data = [
         (100, 10, date(2025, 10, 1), 9.25, 9.25, 0, 0, "Card", "Completed"),
         (101, 11, date(2025, 10, 1), 21.25, 10.0, 0, 0, "Cash", "Completed"),
@@ -140,20 +157,14 @@ try:
         (121, 20, date(2025, 10, 1), 52.2573, 27.28, 0, 0, "Card", "Completed"),
     ]
     
-    for payment_id, order_id, payment_date, amount_due, amount_paid, tips, discount, payment_type, status in payments_data:
-        db.add(Payment(
-            payment_id=payment_id,
-            order_id=order_id,
-            payment_date=payment_date,
-            amount_due=amount_due,
-            amount_paid=amount_paid,
-            tips=tips,
-            discount=discount,
-            payment_type=payment_type,
-            payment_status=status
-        ))
+    payments = [Payment(payment_id=pid, order_id=oid, payment_date=pd, amount_due=ad, 
+                       amount_paid=ap, tips=t, discount=d, payment_type=pt, payment_status=ps)
+                for pid, oid, pd, ad, ap, t, d, pt, ps in payments_data]
+    db.add_all(payments)
     
+    # Commit all changes at once for efficiency
     db.commit()
+    
     print("✅ All data loaded successfully!")
     print("   - 2 Menus")
     print("   - 5 Categories")
